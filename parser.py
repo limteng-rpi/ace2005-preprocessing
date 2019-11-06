@@ -79,6 +79,7 @@ class Parser:
                         event_arguments.append({
                             'role': argument['role'],
                             'position': argument['position'],
+                            'entity_id': argument['entity_id'],
                             'entity_type': entity_type,
                             'text': self.clean_text(argument['text']),
                         })
@@ -107,6 +108,7 @@ class Parser:
                             'role': argument['role'],
                             'position': argument['position'],
                             'entity_type': entity_type,
+                            'entity_id': argument['entity_id'],
                             'text': self.clean_text(argument['text']),
                         })
 
@@ -120,6 +122,14 @@ class Parser:
         return data
 
     def find_correct_offset(self, sgm_text, start_index, text):
+        offset = 0
+        for i in range(0, 70):
+            for j in [-1, 1]:
+                offset = i * j
+                if sgm_text[start_index + offset:start_index + offset + len(text)] == text and \
+                        (start_index + offset - 1 < 0 or not sgm_text[start_index + offset - 1].isalpha()) and \
+                        (start_index + offset + len(text) >= len(sgm_text) or not sgm_text[start_index + offset + len(text)].isalpha()):
+                    return offset
         offset = 0
         for i in range(0, 70):
             for j in [-1, 1]:

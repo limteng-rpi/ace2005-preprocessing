@@ -1,11 +1,45 @@
 import os
 import copy
 import re
+
+import nltk
+
 from parser import Parser
 import json
 from stanfordcorenlp import StanfordCoreNLP
 import argparse
 from tqdm import tqdm
+
+def tokenize(text):
+    text_i = token_i = 0
+    tokens = nltk.wordpunct_tokenize(text)
+    # post process tokenization result
+    tokens_ = []
+    for token in tokens:
+        if token in {'%.', '%,', '."', '?"', '($', '.)', '-$', '%)'}:
+            tokens_.append(token[0])
+            tokens_.append(token[1])
+        elif token == 'ETNew':
+            tokens_.extend(['ET', 'New'])
+        else:
+            tokens_.append(token)
+    tokens = tokens_
+    # add offsets
+    tokens_ = []
+    while (text_i < len(text)):
+        if tokens[token_i] == text[text_i:text_i + len(tokens[token_i])]:
+            tokens_.append((tokens[token_i], text_i, text_i + len(tokens[token_i])))
+            text_i += len(tokens[token_i])
+            token_i += 1
+        elif text[text_i] == ' ' or text[text_i] == '\t':
+            text_i += 1
+        else:
+            print(text)
+            print(tokens)
+            print(text_i, token_i)
+            raise ValueError
+    assert len(tokens) == len(tokens_)
+    return tokens_
 
 
 def get_data_paths(ace2005_path):
@@ -30,18 +64,20 @@ def get_data_paths(ace2005_path):
 def find_token_index(tokens, start_pos, end_pos, phrase):
     start_idx, end_idx = -1, -1
     for idx, token in enumerate(tokens):
-        if token['characterOffsetBegin'] <= start_pos:
+        # if token['characterOffsetBegin'] <= start_pos:
+        if token[1] <= start_pos:
             start_idx = idx
 
     assert start_idx != -1, "start_idx: {}, start_pos: {}, phrase: {}, tokens: {}".format(start_idx, start_pos, phrase, tokens)
     chars = ''
 
     def remove_punc(s):
-        s = re.sub(r'[^\w]', '', s)
+        # s = re.sub(r'[^\w]', '', s)
+        s = re.sub(r'[ \t\n]', '', s)
         return s
 
     for i in range(0, len(tokens) - start_idx):
-        chars += remove_punc(tokens[start_idx + i]['originalText'])
+        chars += remove_punc(tokens[start_idx + i][0]) #['originalText']
         if remove_punc(phrase) in chars:
             end_idx = start_idx + i + 1
             break
@@ -61,8 +97,8 @@ def verify_result(data):
         return remove_punctuation(phrase) not in remove_punctuation(words)
 
     for item in data:
-        words = item['words']
-        for entity_mention in item['golden_entity_mentions']:
+        words = item['tokens']
+        for entity_mention in item['entity_mentions']:
             if check_diff(''.join(words[entity_mention['start']:entity_mention['end']]), entity_mention['text'].replace(' ', '')):
                 print('============================')
                 print('[Warning] entity has invalid start/end')
@@ -70,7 +106,7 @@ def verify_result(data):
                 print('Actual:', words[entity_mention['start']:entity_mention['end']])
                 print('start: {}, end: {}, words: {}'.format(entity_mention['start'], entity_mention['end'], words))
 
-        for event_mention in item['golden_event_mentions']:
+        for event_mention in item['event_mentions']:
             trigger = event_mention['trigger']
             if check_diff(''.join(words[trigger['start']:trigger['end']]), trigger['text'].replace(' ', '')):
                 print('============================')
@@ -110,33 +146,37 @@ def preprocessing(data_type, files):
             data = dict()
             data['sentence'] = item['sentence']
             data['doc_id'] = item['doc_id']
-            data['golden_entity_mentions'] = []
-            data['golden_event_mentions'] = []
-            data['golden_relation_mentions'] = []
+            data['entity_mentions'] = []
+            data['event_mentions'] = []
+            data['relation_mentions'] = []
 
-            try:
-                nlp_res_raw = nlp.annotate(item['sentence'], properties={'annotators': 'tokenize,ssplit,pos,lemma,parse'})
-                nlp_res = json.loads(nlp_res_raw)
-            except Exception as e:
-                print('[Warning] StanfordCore Exception: ', nlp_res_raw, 'This sentence will be ignored.')
-                print('If you want to include all sentences, please refer to this issue: https://github.com/nlpcl-lab/ace2005-preprocessing/issues/1')
-                continue
+            # try:
+            #     nlp_res_raw = nlp.annotate(item['sentence'], properties={'annotators': 'tokenize,ssplit,pos,lemma,parse'})
+            #     nlp_res = json.loads(nlp_res_raw)
+            # except Exception as e:
+            #     print('[Warning] StanfordCore Exception: ', nlp_res_raw, 'This sentence will be ignored.')
+            #     print('If you want to include all sentences, please refer to this issue: https://github.com/nlpcl-lab/ace2005-preprocessing/issues/1')
+            #     continue
 
-            tokens = nlp_res['sentences'][0]['tokens']
+            # tokens = nlp_res['sentences'][0]['tokens']
 
-            if len(nlp_res['sentences']) >= 2:
-                # TODO: issue where the sentence segmentation of NTLK and StandfordCoreNLP do not match
-                # This error occurred so little that it was temporarily ignored (< 20 sentences).
-                continue
+            # if len(nlp_res['sentences']) >= 2:
+            #     TODO: issue where the sentence segmentation of NTLK and StandfordCoreNLP do not match
+            #     This error occurred so little that it was temporarily ignored (< 20 sentences).
+                # continue
 
-            data['stanford_colcc'] = []
-            for dep in nlp_res['sentences'][0]['enhancedPlusPlusDependencies']:
-                data['stanford_colcc'].append('{}/dep={}/gov={}'.format(dep['dep'], dep['dependent'] - 1, dep['governor'] - 1))
+            # data['stanford_colcc'] = []
+            # for dep in nlp_res['sentences'][0]['enhancedPlusPlusDependencies']:
+            #     data['stanford_colcc'].append('{}/dep={}/gov={}'.format(dep['dep'], dep['dependent'] - 1, dep['governor'] - 1))
 
-            data['words'] = list(map(lambda x: x['word'], tokens))
-            data['pos_tags'] = list(map(lambda x: x['pos'], tokens))
-            data['lemma'] = list(map(lambda x: x['lemma'], tokens))
-            data['parse'] = nlp_res['sentences'][0]['parse']
+            # data['words'] = list(map(lambda x: x['word'], tokens))
+            # data['pos_tags'] = list(map(lambda x: x['pos'], tokens))
+            # data['lemma'] = list(map(lambda x: x['lemma'], tokens))
+            # data['parse'] = nlp_res['sentences'][0]['parse']
+
+            # data['words'] = nltk.wordpunct_tokenize(item['sentence'])
+            tokens = tokenize(item['sentence'])
+            data['tokens'] = [t[0] for t in tokens]
 
             sent_start_pos = item['position'][0]
 
@@ -164,7 +204,7 @@ def preprocessing(data_type, files):
                 entity_mention['head_end'] = head_end_idx
                 del entity_mention['head_position']
 
-                data['golden_entity_mentions'].append(entity_mention)
+                data['entity_mentions'].append(entity_mention)
 
             for event_mention in item['golden_event_mentions']:
                 # same event mention can be shared
@@ -200,7 +240,7 @@ def preprocessing(data_type, files):
                     arguments.append(argument)
 
                 event_mention['arguments'] = arguments
-                data['golden_event_mentions'].append(event_mention)
+                data['event_mentions'].append(event_mention)
 
             for relation_mention in item['golden_relation_mentions']:
                 relation_mention = copy.deepcopy(relation_mention)
@@ -224,7 +264,7 @@ def preprocessing(data_type, files):
                     arguments.append(argument)
 
                 relation_mention['arguments'] = arguments
-                data['golden_relation_mentions'].append(relation_mention)
+                data['relation_mentions'].append(relation_mention)
 
             result.append(data)
 
