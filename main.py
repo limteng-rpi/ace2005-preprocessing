@@ -62,7 +62,7 @@ def verify_result(data):
 
     for item in data:
         words = item['words']
-        for entity_mention in item['golden-entity-mentions']:
+        for entity_mention in item['golden_entity_mentions']:
             if check_diff(''.join(words[entity_mention['start']:entity_mention['end']]), entity_mention['text'].replace(' ', '')):
                 print('============================')
                 print('[Warning] entity has invalid start/end')
@@ -70,7 +70,7 @@ def verify_result(data):
                 print('Actual:', words[entity_mention['start']:entity_mention['end']])
                 print('start: {}, end: {}, words: {}'.format(entity_mention['start'], entity_mention['end'], words))
 
-        for event_mention in item['golden-event-mentions']:
+        for event_mention in item['golden_event_mentions']:
             trigger = event_mention['trigger']
             if check_diff(''.join(words[trigger['start']:trigger['end']]), trigger['text'].replace(' ', '')):
                 print('============================')
@@ -91,7 +91,7 @@ def verify_result(data):
 
 def preprocessing(data_type, files):
     result = []
-    event_count, entity_count, sent_count, argument_count = 0, 0, 0, 0
+    event_count, entity_count, relation_count, sent_count, argument_count, headline_count = 0, 0, 0, 0, 0, 0
 
     print('=' * 20)
     print('[preprocessing] type: ', data_type)
@@ -99,14 +99,20 @@ def preprocessing(data_type, files):
         parser = Parser(path=file)
 
         entity_count += len(parser.entity_mentions)
+        relation_count += len(parser.relation_mentions)
         event_count += len(parser.event_mentions)
         sent_count += len(parser.sents_with_pos)
 
         for item in parser.get_data():
+            if item['headline']:
+                headline_count += 1
+                continue
             data = dict()
             data['sentence'] = item['sentence']
-            data['golden-entity-mentions'] = []
-            data['golden-event-mentions'] = []
+            data['doc_id'] = item['doc_id']
+            data['golden_entity_mentions'] = []
+            data['golden_event_mentions'] = []
+            data['golden_relation_mentions'] = []
 
             try:
                 nlp_res_raw = nlp.annotate(item['sentence'], properties={'annotators': 'tokenize,ssplit,pos,lemma,parse'})
@@ -123,34 +129,44 @@ def preprocessing(data_type, files):
                 # This error occurred so little that it was temporarily ignored (< 20 sentences).
                 continue
 
-            data['stanford-colcc'] = []
+            data['stanford_colcc'] = []
             for dep in nlp_res['sentences'][0]['enhancedPlusPlusDependencies']:
-                data['stanford-colcc'].append('{}/dep={}/gov={}'.format(dep['dep'], dep['dependent'] - 1, dep['governor'] - 1))
+                data['stanford_colcc'].append('{}/dep={}/gov={}'.format(dep['dep'], dep['dependent'] - 1, dep['governor'] - 1))
 
             data['words'] = list(map(lambda x: x['word'], tokens))
-            data['pos-tags'] = list(map(lambda x: x['pos'], tokens))
+            data['pos_tags'] = list(map(lambda x: x['pos'], tokens))
             data['lemma'] = list(map(lambda x: x['lemma'], tokens))
             data['parse'] = nlp_res['sentences'][0]['parse']
 
             sent_start_pos = item['position'][0]
 
-            for entity_mention in item['golden-entity-mentions']:
+            for entity_mention in item['golden_entity_mentions']:
                 position = entity_mention['position']
+                head_position = entity_mention['head_position']
                 start_idx, end_idx = find_token_index(
                     tokens=tokens,
                     start_pos=position[0] - sent_start_pos,
                     end_pos=position[1] - sent_start_pos + 1,
                     phrase=entity_mention['text'],
                 )
+                head_start_idx, head_end_idx = find_token_index(
+                    tokens=tokens,
+                    start_pos=head_position[0] - sent_start_pos,
+                    end_pos=head_position[1] - sent_start_pos + 1,
+                    phrase=entity_mention['head_text']
+                )
 
                 entity_mention['start'] = start_idx
                 entity_mention['end'] = end_idx
-
                 del entity_mention['position']
 
-                data['golden-entity-mentions'].append(entity_mention)
+                entity_mention['head_start'] = head_start_idx
+                entity_mention['head_end'] = head_end_idx
+                del entity_mention['head_position']
 
-            for event_mention in item['golden-event-mentions']:
+                data['golden_entity_mentions'].append(entity_mention)
+
+            for event_mention in item['golden_event_mentions']:
                 # same event mention can be shared
                 event_mention = copy.deepcopy(event_mention)
                 position = event_mention['trigger']['position']
@@ -184,15 +200,41 @@ def preprocessing(data_type, files):
                     arguments.append(argument)
 
                 event_mention['arguments'] = arguments
-                data['golden-event-mentions'].append(event_mention)
+                data['golden_event_mentions'].append(event_mention)
+
+            for relation_mention in item['golden_relation_mentions']:
+                relation_mention = copy.deepcopy(relation_mention)
+                del relation_mention['position']
+
+                arguments = []
+                argument_count += len(relation_mention['arguments'])
+                for argument in relation_mention['arguments']:
+                    position = argument['position']
+                    start_idx, end_idx = find_token_index(
+                        tokens=tokens,
+                        start_pos=position[0] - sent_start_pos,
+                        end_pos=position[1] - sent_start_pos + 1,
+                        phrase=argument['text'],
+                    )
+
+                    argument['start'] = start_idx
+                    argument['end'] = end_idx
+                    del argument['position']
+
+                    arguments.append(argument)
+
+                relation_mention['arguments'] = arguments
+                data['golden_relation_mentions'].append(relation_mention)
 
             result.append(data)
 
     print('======[Statistics]======')
-    print('sent :', sent_count)
-    print('event :', event_count)
-    print('entity :', entity_count)
+    print('sent:', sent_count)
+    print('event:', event_count)
+    print('entity:', entity_count)
+    print('relation:', relation_count)
     print('argument:', argument_count)
+    print('headline:', headline_count)
 
     verify_result(result)
     with open('output/{}.json'.format(data_type), 'w') as f:
